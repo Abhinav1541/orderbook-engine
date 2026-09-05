@@ -51,6 +51,36 @@ void matchBuyOrder(Order& buyOrder) {
     }
 }
 
+void matchSellOrder(Order& sellOrder) {
+    while (sellOrder.quantity > 0 && !bids.empty()) {
+        auto bestBidLevel = bids.begin();
+        int bestBidPrice = bestBidLevel->first;
+
+        if (sellOrder.price > bestBidPrice) {
+            break;
+        }
+
+        std::list<Order>& ordersAtBestBid = bestBidLevel->second;
+        Order& restingOrder = ordersAtBestBid.front();
+
+        int tradedQty = std::min(sellOrder.quantity, restingOrder.quantity);
+
+        cout << "TRADE: " << tradedQty << " shares @ " << bestBidPrice
+             << " (Sell Order " << sellOrder.orderId << " / Buy Order " << restingOrder.orderId << ")" << endl;
+
+        sellOrder.quantity -= tradedQty;
+        restingOrder.quantity -= tradedQty;
+
+        if (restingOrder.quantity == 0) {
+            ordersAtBestBid.pop_front();
+        }
+
+        if (ordersAtBestBid.empty()) {
+            bids.erase(bestBidLevel);
+        }
+    }
+}
+
 void addOrder(Order order) {
     if (order.side == Side::BUY) {
         matchBuyOrder(order);
@@ -58,7 +88,10 @@ void addOrder(Order order) {
             bids[order.price].push_back(order);
         }
     } else {
-        asks[order.price].push_back(order);
+        matchSellOrder(order);
+        if (order.quantity > 0) {
+            asks[order.price].push_back(order);
+        }
     }
 }
 
@@ -93,6 +126,9 @@ int main() {
 
     Order o5 = {5, 104, 6, Side::BUY, 4};
     addOrder(o5);
+
+    Order o6 = {6, 99, 5, Side::SELL, 5};
+    addOrder(o6);
 
     printBook();
     return 0;
