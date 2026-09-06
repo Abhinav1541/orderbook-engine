@@ -9,6 +9,7 @@ using std::endl;
 using std::string;
 
 enum class Side { BUY, SELL };
+enum class OrderType { LIMIT, MARKET };
 
 struct Order {
     int orderId;
@@ -16,6 +17,7 @@ struct Order {
     int quantity;
     Side side;
     int timestamp;
+    OrderType type;
 };
 
 std::map<int, std::list<Order>, std::greater<int>> bids;
@@ -84,12 +86,12 @@ void matchSellOrder(Order& sellOrder) {
 void addOrder(Order order) {
     if (order.side == Side::BUY) {
         matchBuyOrder(order);
-        if (order.quantity > 0) {
+        if (order.quantity > 0 && order.type == OrderType::LIMIT) {
             bids[order.price].push_back(order);
         }
     } else {
         matchSellOrder(order);
-        if (order.quantity > 0) {
+        if (order.quantity > 0 && order.type == OrderType::LIMIT) {
             asks[order.price].push_back(order);
         }
     }
@@ -114,21 +116,25 @@ void printBook() {
 }
 
 int main() {
-    Order o1 = {1, 100, 10, Side::BUY, 0};
-    Order o2 = {2, 105, 5, Side::SELL, 1};
-    Order o3 = {3, 100, 8, Side::BUY, 2};
-    Order o4 = {4, 103, 4, Side::SELL, 3};
+    Order o1 = {1, 100, 10, Side::BUY, 0, OrderType::LIMIT};
+    Order o2 = {2, 105, 5, Side::SELL, 1, OrderType::LIMIT};
+    Order o3 = {3, 100, 8, Side::BUY, 2, OrderType::LIMIT};
+    Order o4 = {4, 103, 4, Side::SELL, 3, OrderType::LIMIT};
 
     addOrder(o1);
     addOrder(o2);
     addOrder(o3);
     addOrder(o4);
 
-    Order o5 = {5, 104, 6, Side::BUY, 4};
+    Order o5 = {5, 104, 6, Side::BUY, 4, OrderType::LIMIT};
     addOrder(o5);
 
-    Order o6 = {6, 99, 5, Side::SELL, 5};
+    Order o6 = {6, 99, 5, Side::SELL, 5, OrderType::LIMIT};
     addOrder(o6);
+
+    // Market buy order — price is irrelevant, set absurdly high so it always matches
+    Order o7 = {7, 999999999, 10, Side::BUY, 6, OrderType::MARKET};
+    addOrder(o7);
 
     printBook();
     return 0;
