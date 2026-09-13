@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <cassert>
 
 using std::cout;
 using std::endl;
@@ -157,32 +158,48 @@ void printBook() {
 }
 
 int main() {
-    Order o1 = {1, 100, 10, Side::BUY, 0, OrderType::LIMIT};
-    Order o2 = {2, 105, 5, Side::SELL, 1, OrderType::LIMIT};
-    Order o3 = {3, 100, 8, Side::BUY, 2, OrderType::LIMIT};
-    Order o4 = {4, 103, 4, Side::SELL, 3, OrderType::LIMIT};
+    // Test 1: full match at the same price
+    Order buy = {1, 100, 10, Side::BUY, 0, OrderType::LIMIT};
+    Order sell = {2, 100, 10, Side::SELL, 1, OrderType::LIMIT};
 
-    addOrder(o1);
-    addOrder(o2);
-    addOrder(o3);
-    addOrder(o4);
+    addOrder(buy);
+    addOrder(sell);
 
-    Order o5 = {5, 104, 6, Side::BUY, 4, OrderType::LIMIT};
-    addOrder(o5);
+    assert(bids.empty());
+    assert(asks.empty());
 
-    Order o6 = {6, 99, 5, Side::SELL, 5, OrderType::LIMIT};
-    addOrder(o6);
+    cout << "Test 1 passed!" << endl;
 
-    Order o7 = {7, 999999999, 10, Side::BUY, 6, OrderType::MARKET};
-    addOrder(o7);
+    // Test 2: partial match, leftover rests in book
+    bids.clear();
+    asks.clear();
+    orderLookup.clear();
 
-    cout << "----- BEFORE CANCEL -----" << endl;
-    printBook();
+    Order buy2 = {3, 100, 10, Side::BUY, 2, OrderType::LIMIT};
+    Order sell2 = {4, 100, 4, Side::SELL, 3, OrderType::LIMIT};
 
-    cancelOrder(3);  // cancel OrderId 3, resting at price 100
+    addOrder(buy2);
+    addOrder(sell2);
 
-    cout << "----- AFTER CANCEL -----" << endl;
-    printBook();
+    assert(asks.empty());
+    assert(bids[100].front().quantity == 6);
+
+    cout << "Test 2 passed!" << endl;
+
+        // Test 3: cancellation removes the order correctly
+    bids.clear();
+    asks.clear();
+    orderLookup.clear();
+
+    Order buy3 = {5, 100, 10, Side::BUY, 4, OrderType::LIMIT};
+    addOrder(buy3);
+
+    cancelOrder(5);
+
+    assert(bids.empty());
+    assert(orderLookup.find(5) == orderLookup.end());
+
+    cout << "Test 3 passed!" << endl;
 
     return 0;
 }
