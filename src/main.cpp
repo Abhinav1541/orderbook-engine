@@ -195,6 +195,12 @@ int main() {
         res.set_content("Order added successfully.", "text/plain");
     });
 
+    svr.Post("/cancel", [](const httplib::Request& req, httplib::Response& res) {
+        int orderId = std::stoi(req.get_param_value("orderId"));
+        cancelOrder(orderId);
+        res.set_content("Cancel request processed.", "text/plain");
+    });
+
     Order o1 = {1, 100, 10, Side::BUY, 0, OrderType::LIMIT};
     addOrder(o1);
 
