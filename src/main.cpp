@@ -1,3 +1,4 @@
+#define _WIN32_WINNT 0x0A00
 #include <iostream>
 #include <map>
 #include <list>
@@ -8,6 +9,7 @@
 #include <chrono>
 #include <random>
 #include <algorithm>
+#include "httplib.h"
 
 using std::cout;
 using std::endl;
@@ -154,150 +156,50 @@ void printBook() {
     }
 }
 
-void runBenchmark(int numOrders) {
-    bids.clear();
-    asks.clear();
-    orderLookup.clear();
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> priceDist(95, 105);
-    std::uniform_int_distribution<int> qtyDist(1, 20);
-    std::uniform_int_distribution<int> sideDist(0, 1);
-
-    std::vector<long long> latencies;
-    latencies.reserve(numOrders);
-
-    auto overallStart = std::chrono::high_resolution_clock::now();
-
-    for (int i = 0; i < numOrders; i++) {
-        Order o;
-        o.orderId = i;
-        o.price = priceDist(gen);
-        o.quantity = qtyDist(gen);
-        o.side = (sideDist(gen) == 0) ? Side::BUY : Side::SELL;
-        o.timestamp = i;
-        o.type = OrderType::LIMIT;
-
-        auto orderStart = std::chrono::high_resolution_clock::now();
-        addOrder(o);
-        auto orderEnd = std::chrono::high_resolution_clock::now();
-
-        auto orderDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(orderEnd - orderStart);
-        latencies.push_back(orderDuration.count());
-    }
-
-    auto overallEnd = std::chrono::high_resolution_clock::now();
-    auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(overallEnd - overallStart);
-
-    cout << "Processed " << numOrders << " orders in " << totalDuration.count() << " ms" << endl;
-    double ordersPerSecond = (double)numOrders / ((double)totalDuration.count() / 1000.0);
-    cout << "Throughput: " << ordersPerSecond << " orders/sec" << endl;
-
-    std::sort(latencies.begin(), latencies.end());
-
-    long long p50 = latencies[latencies.size() * 50 / 100];
-    long long p99 = latencies[latencies.size() * 99 / 100];
-
-    cout << "[Mixed] p50 latency: " << p50 << " ns" << endl;
-    cout << "[Mixed] p99 latency: " << p99 << " ns" << endl;
-}
-
-void runInsertOnlyBenchmark(int numOrders) {
-    bids.clear();
-    asks.clear();
-    orderLookup.clear();
-
-    std::vector<long long> latencies;
-    latencies.reserve(numOrders);
-
-    for (int i = 0; i < numOrders; i++) {
-        Order o;
-        o.orderId = i;
-        o.price = i;
-        o.quantity = 10;
-        o.side = Side::BUY;
-        o.timestamp = i;
-        o.type = OrderType::LIMIT;
-
-        auto orderStart = std::chrono::high_resolution_clock::now();
-        addOrder(o);
-        auto orderEnd = std::chrono::high_resolution_clock::now();
-
-        latencies.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(orderEnd - orderStart).count());
-    }
-
-    std::sort(latencies.begin(), latencies.end());
-    cout << "[Insert-only] p50: " << latencies[latencies.size() * 50 / 100]
-         << " ns, p99: " << latencies[latencies.size() * 99 / 100] << " ns" << endl;
-}
-
-void runMatchOnlyBenchmark(int numOrders) {
-    bids.clear();
-    asks.clear();
-    orderLookup.clear();
-
-    std::vector<long long> latencies;
-    latencies.reserve(numOrders);
-
-    for (int i = 0; i < numOrders; i++) {
-        Order o;
-        o.orderId = i;
-        o.price = 100;
-        o.quantity = 10;
-        o.side = (i % 2 == 0) ? Side::BUY : Side::SELL;
-        o.timestamp = i;
-        o.type = OrderType::LIMIT;
-
-        auto orderStart = std::chrono::high_resolution_clock::now();
-        addOrder(o);
-        auto orderEnd = std::chrono::high_resolution_clock::now();
-
-        latencies.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(orderEnd - orderStart).count());
-    }
-
-    std::sort(latencies.begin(), latencies.end());
-    cout << "[Match-only] p50: " << latencies[latencies.size() * 50 / 100]
-         << " ns, p99: " << latencies[latencies.size() * 99 / 100] << " ns" << endl;
-}
-
-void runInsertOnlySmallPriceRangeBenchmark(int numOrders) {
-    bids.clear();
-    asks.clear();
-    orderLookup.clear();
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> priceDist(1, 10);
-
-    std::vector<long long> latencies;
-    latencies.reserve(numOrders);
-
-    for (int i = 0; i < numOrders; i++) {
-        Order o;
-        o.orderId = i;
-        o.price = priceDist(gen);
-        o.quantity = 10;
-        o.side = Side::BUY;
-        o.timestamp = i;
-        o.type = OrderType::LIMIT;
-
-        auto orderStart = std::chrono::high_resolution_clock::now();
-        addOrder(o);
-        auto orderEnd = std::chrono::high_resolution_clock::now();
-
-        latencies.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(orderEnd - orderStart).count());
-    }
-
-    std::sort(latencies.begin(), latencies.end());
-    cout << "[Insert-only, small price range] p50: " << latencies[latencies.size() * 50 / 100]
-         << " ns, p99: " << latencies[latencies.size() * 99 / 100] << " ns" << endl;
-}
-
 int main() {
-    runBenchmark(100000);
-    runInsertOnlyBenchmark(100000);
-    runMatchOnlyBenchmark(100000);
-    runInsertOnlySmallPriceRangeBenchmark(100000);
+    httplib::Server svr;
+
+    svr.Get("/orderbook", [](const httplib::Request&, httplib::Response& res) {
+        std::string result = "";
+
+        result += "----- BIDS -----\n";
+        for (const auto& [price, orderList] : bids) {
+            result += "Price: " + std::to_string(price) + "\n";
+            for (const auto& order : orderList) {
+                result += "  OrderId: " + std::to_string(order.orderId) + ", Qty: " + std::to_string(order.quantity) + "\n";
+            }
+        }
+
+        result += "----- ASKS -----\n";
+        for (const auto& [price, orderList] : asks) {
+            result += "Price: " + std::to_string(price) + "\n";
+            for (const auto& order : orderList) {
+                result += "  OrderId: " + std::to_string(order.orderId) + ", Qty: " + std::to_string(order.quantity) + "\n";
+            }
+        }
+
+        res.set_content(result, "text/plain");
+    });
+
+    svr.Post("/order", [](const httplib::Request& req, httplib::Response& res) {
+        int orderId = std::stoi(req.get_param_value("orderId"));
+        int price = std::stoi(req.get_param_value("price"));
+        int quantity = std::stoi(req.get_param_value("quantity"));
+        std::string sideStr = req.get_param_value("side");
+
+        Side side = (sideStr == "BUY") ? Side::BUY : Side::SELL;
+
+        Order o = {orderId, price, quantity, side, 0, OrderType::LIMIT};
+        addOrder(o);
+
+        res.set_content("Order added successfully.", "text/plain");
+    });
+
+    Order o1 = {1, 100, 10, Side::BUY, 0, OrderType::LIMIT};
+    addOrder(o1);
+
+    std::cout << "Order book server running on port 8080..." << std::endl;
+    svr.listen("0.0.0.0", 8080);
+
     return 0;
 }
