@@ -10,6 +10,7 @@
 #include <random>
 #include <algorithm>
 #include "httplib.h"
+#include "sqlite3.h"
 
 using std::cout;
 using std::endl;
@@ -156,7 +157,43 @@ void printBook() {
     }
 }
 
+sqlite3* db;
+
+void initDatabase() {
+    cout << "initDatabase() called" << endl;
+
+    int result = sqlite3_open("orderbook.db", &db);
+
+    if (result != SQLITE_OK) {
+        cout << "Failed to open database." << endl;
+        return;
+    }
+
+    cout << "Database opened, creating table..." << endl;
+
+    const char* createTableSQL =
+        "CREATE TABLE IF NOT EXISTS trades ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "buy_order_id INTEGER,"
+        "sell_order_id INTEGER,"
+        "price INTEGER,"
+        "quantity INTEGER"
+        ");";
+
+    char* errMsg = nullptr;
+    result = sqlite3_exec(db, createTableSQL, nullptr, nullptr, &errMsg);
+
+    if (result != SQLITE_OK) {
+        cout << "Failed to create table: " << errMsg << endl;
+        sqlite3_free(errMsg);
+    } else {
+        cout << "Database initialized successfully." << endl;
+    }
+}
+
 int main() {
+    initDatabase();
+
     httplib::Server svr;
 
     svr.Get("/orderbook", [](const httplib::Request&, httplib::Response& res) {
@@ -198,7 +235,7 @@ int main() {
     svr.Post("/cancel", [](const httplib::Request& req, httplib::Response& res) {
         int orderId = std::stoi(req.get_param_value("orderId"));
         cancelOrder(orderId);
-        res.set_content("Cancelrequest processed.", "text/plain");
+        res.set_content("Cancel request processed.", "text/plain");
     });
 
     Order o1 = {1, 100, 10, Side::BUY, 0, OrderType::LIMIT};

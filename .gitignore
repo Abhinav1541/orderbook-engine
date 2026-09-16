@@ -1,5 +1,6 @@
 *.exe
 *.out
 *.o
+*.db
 build/
 .vscode/
