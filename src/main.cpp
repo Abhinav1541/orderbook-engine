@@ -39,6 +39,55 @@ struct OrderLocation {
 
 std::unordered_map<int, OrderLocation> orderLookup;
 
+sqlite3* db;
+
+void initDatabase() {
+    cout << "initDatabase() called" << endl;
+
+    int result = sqlite3_open("orderbook.db", &db);
+
+    if (result != SQLITE_OK) {
+        cout << "Failed to open database." << endl;
+        return;
+    }
+
+    cout << "Database opened, creating table..." << endl;
+
+    const char* createTableSQL =
+        "CREATE TABLE IF NOT EXISTS trades ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "buy_order_id INTEGER,"
+        "sell_order_id INTEGER,"
+        "price INTEGER,"
+        "quantity INTEGER"
+        ");";
+
+    char* errMsg = nullptr;
+    result = sqlite3_exec(db, createTableSQL, nullptr, nullptr, &errMsg);
+
+    if (result != SQLITE_OK) {
+        cout << "Failed to create table: " << errMsg << endl;
+        sqlite3_free(errMsg);
+    } else {
+        cout << "Database initialized successfully." << endl;
+    }
+}
+
+void logTrade(int buyOrderId, int sellOrderId, int price, int quantity) {
+    const char* insertSQL = "INSERT INTO trades (buy_order_id, sell_order_id, price, quantity) VALUES (?, ?, ?, ?);";
+
+    sqlite3_stmt* stmt;
+    sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nullptr);
+
+    sqlite3_bind_int(stmt, 1, buyOrderId);
+    sqlite3_bind_int(stmt, 2, sellOrderId);
+    sqlite3_bind_int(stmt, 3, price);
+    sqlite3_bind_int(stmt, 4, quantity);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 void matchBuyOrder(Order& buyOrder) {
     while (buyOrder.quantity > 0 && !asks.empty()) {
         auto bestAskLevel = asks.begin();
@@ -52,6 +101,8 @@ void matchBuyOrder(Order& buyOrder) {
         Order& restingOrder = ordersAtBestAsk.front();
 
         int tradedQty = std::min(buyOrder.quantity, restingOrder.quantity);
+
+        logTrade(buyOrder.orderId, restingOrder.orderId, bestAskPrice, tradedQty);
 
         buyOrder.quantity -= tradedQty;
         restingOrder.quantity -= tradedQty;
@@ -80,6 +131,8 @@ void matchSellOrder(Order& sellOrder) {
         Order& restingOrder = ordersAtBestBid.front();
 
         int tradedQty = std::min(sellOrder.quantity, restingOrder.quantity);
+
+        logTrade(restingOrder.orderId, sellOrder.orderId, bestBidPrice, tradedQty);
 
         sellOrder.quantity -= tradedQty;
         restingOrder.quantity -= tradedQty;
@@ -157,40 +210,6 @@ void printBook() {
     }
 }
 
-sqlite3* db;
-
-void initDatabase() {
-    cout << "initDatabase() called" << endl;
-
-    int result = sqlite3_open("orderbook.db", &db);
-
-    if (result != SQLITE_OK) {
-        cout << "Failed to open database." << endl;
-        return;
-    }
-
-    cout << "Database opened, creating table..." << endl;
-
-    const char* createTableSQL =
-        "CREATE TABLE IF NOT EXISTS trades ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "buy_order_id INTEGER,"
-        "sell_order_id INTEGER,"
-        "price INTEGER,"
-        "quantity INTEGER"
-        ");";
-
-    char* errMsg = nullptr;
-    result = sqlite3_exec(db, createTableSQL, nullptr, nullptr, &errMsg);
-
-    if (result != SQLITE_OK) {
-        cout << "Failed to create table: " << errMsg << endl;
-        sqlite3_free(errMsg);
-    } else {
-        cout << "Database initialized successfully." << endl;
-    }
-}
-
 int main() {
     initDatabase();
 
@@ -217,6 +236,30 @@ int main() {
 
         res.set_content(result, "text/plain");
     });
+
+    svr.Get("/trades", [](const httplib::Request&, httplib::Response& res) {
+    std::string result = "";
+
+    const char* selectSQL = "SELECT id, buy_order_id, sell_order_id, price, quantity FROM trades;";
+
+    sqlite3_stmt* stmt;
+    sqlite3_prepare_v2(db, selectSQL, -1, &stmt, nullptr);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int id = sqlite3_column_int(stmt, 0);
+        int buyOrderId = sqlite3_column_int(stmt, 1);
+        int sellOrderId = sqlite3_column_int(stmt, 2);
+        int price = sqlite3_column_int(stmt, 3);
+        int quantity = sqlite3_column_int(stmt, 4);
+
+        result += "Trade " + std::to_string(id) + ": Buy#" + std::to_string(buyOrderId) +
+                  " / Sell#" + std::to_string(sellOrderId) + " - " + std::to_string(quantity) +
+                  " @ " + std::to_string(price) + "\n";
+    }
+
+    sqlite3_finalize(stmt);
+    res.set_content(result, "text/plain");
+});
 
     svr.Post("/order", [](const httplib::Request& req, httplib::Response& res) {
         int orderId = std::stoi(req.get_param_value("orderId"));
