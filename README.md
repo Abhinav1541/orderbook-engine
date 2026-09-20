@@ -19,46 +19,46 @@ Core matching rule: a trade executes whenever an incoming buy price is greater t
 
 ```mermaid
 graph TD
-    Client[Client / curl / browser] -->|HTTP request| Server[cpp-httplib server]
+    Client["Client / curl / browser"] -->|HTTP request| Server["cpp-httplib server"]
 
-    Server -->|POST /order| AddOrder[addOrder]
-    Server -->|POST /cancel| CancelOrder[cancelOrder]
-    Server -->|GET /orderbook| ReadBook[Read bids / asks maps]
-    Server -->|GET /trades| ReadTrades[Query trades table]
+    Server -->|"POST /order"| AddOrder["addOrder"]
+    Server -->|"POST /cancel"| CancelOrder["cancelOrder"]
+    Server -->|"GET /orderbook"| ReadBook["Read bids / asks maps"]
+    Server -->|"GET /trades"| ReadTrades["Query trades table"]
 
-    AddOrder --> Match{Buy or Sell?}
-    Match -->|Buy| MatchBuy[matchBuyOrder<br/>sweeps asks]
-    Match -->|Sell| MatchSell[matchSellOrder<br/>sweeps bids]
+    AddOrder --> Match{"Buy or Sell?"}
+    Match -->|"Buy"| MatchBuy["matchBuyOrder<br/>sweeps asks"]
+    Match -->|"Sell"| MatchSell["matchSellOrder<br/>sweeps bids"]
 
-    MatchBuy --> Book[(bids / asks<br/>std::map of std::list)]
+    MatchBuy --> Book[("bids / asks maps<br/>std::map of std::list")]
     MatchSell --> Book
     CancelOrder --> Book
     ReadBook --> Book
 
-    MatchBuy -->|on fill| LogTrade[logTrade<br/>prepared statement insert]
-    MatchSell -->|on fill| LogTrade
-    LogTrade --> DB[(SQLite: orderbook.db)]
+    MatchBuy -->|"on fill"| LogTrade["logTrade<br/>prepared statement insert"]
+    MatchSell -->|"on fill"| LogTrade
+    LogTrade --> DB[("SQLite - orderbook.db")]
     ReadTrades --> DB
 
-    Book -->|remaining qty > 0, LIMIT| Lookup[orderLookup<br/>unordered_map for O(1) cancel]
+    Book -->|"remaining qty > 0, LIMIT"| Lookup["orderLookup<br/>unordered_map for O of 1 cancel"]
 
-    Server -->|response| Client
+    Server -->|"response"| Client
 ```
 
 **Deployment**
 
 ```mermaid
 graph LR
-    Dev[Local dev<br/>Windows + g++/gcc] -->|git push| GitHub[GitHub repo]
-    GitHub -->|auto-deploy on push| Render[Render: Docker web service]
+    Dev["Local dev<br/>Windows + g++/gcc"] -->|"git push"| GitHub["GitHub repo"]
+    GitHub -->|"auto-deploy on push"| Render["Render - Docker web service"]
 
-    subgraph Docker build
-        Build[Stage 1: gcc:13<br/>compile + statically link] --> Runtime[Stage 2: debian:bookworm-slim<br/>copy binary only]
+    subgraph "Docker build"
+        Build["Stage 1: gcc:13<br/>compile + statically link"] --> Runtime["Stage 2: debian:bookworm-slim<br/>copy binary only"]
     end
 
     Render --> Build
-    Runtime -->|runs ./orderbook<br/>binds 0.0.0.0:$PORT| Live[Live public URL]
-    Live -->|ephemeral disk| SQLiteFile[(orderbook.db<br/>resets on restart)]
+    Runtime -->|"runs orderbook binary<br/>binds 0.0.0.0 on PORT"| Live["Live public URL"]
+    Live -->|"ephemeral disk"| SQLiteFile[("orderbook.db<br/>resets on restart")]
 ```
 
 **Order book structure**
