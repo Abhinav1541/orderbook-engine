@@ -2,7 +2,7 @@
 
 A limit order book and matching engine written in C++, with an HTTP API and SQLite-backed trade persistence. Built to explore how exchange-style matching systems are designed for correctness and low latency.
 
-**Live demo:** https://orderbook-engine.onrender.com/orderbook
+**Live demo:** https://orderbook-engine.onrender.com/ — an interactive dashboard for placing/cancelling orders and watching the book and trade history update live (raw text output is still available directly at `/orderbook` and `/trades`, if preferred)
 *(hosted on Render's free tier — the service sleeps after 15 minutes of inactivity, so the first request may take 30–60 seconds to wake it up)*
 
 ---
@@ -87,6 +87,7 @@ graph LR
 
 | Method | Endpoint      | Description                                      |
 |--------|---------------|---------------------------------------------------|
+| GET    | `/`           | Live dashboard — place/cancel orders, view book and trade history |
 | GET    | `/orderbook`  | Returns the current state of the book (bids/asks) |
 | POST   | `/order`      | Places a new limit or market order                |
 | POST   | `/cancel`     | Cancels a resting order by ID                     |
