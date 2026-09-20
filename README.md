@@ -97,11 +97,9 @@ graph LR
 **Example: `POST /order`**
 ```bash
 curl -X POST https://orderbook-engine.onrender.com/order \
-  -d "orderId=12&price=102&quantity=15&side=BUY"
+  -d "orderId=12&price=102&quantity=15&side=BUY&type=LIMIT"
 ```
-Parameters: `orderId` (int), `price` (int), `quantity` (int), `side` (`BUY` or `SELL`, uppercase).
-
-> Note: the API currently only ever creates **limit** orders — every order placed through `/order` is hardcoded to `OrderType::LIMIT` in the handler, regardless of the matching engine internally supporting a `MARKET` type as well. See "Known limitations" below.
+Parameters: `orderId` (int), `price` (int), `quantity` (int), `side` (`BUY` or `SELL`, uppercase), `type` (`LIMIT` or `MARKET`, uppercase).
 
 **Example: `POST /cancel`**
 ```bash
@@ -120,12 +118,12 @@ Price: 101
   OrderId: 7, Qty: 10
 ```
 
-An incoming **buy** order arrives: `orderId=12, price=102, quantity=15, side=BUY`.
+An incoming **buy** order arrives: `orderId=12, price=102, quantity=15, side=BUY, type=LIMIT`.
 
 1. The engine checks the best ask (\$101) against the incoming buy price (\$102). Since \$102 ≥ \$101, they're eligible to match.
 2. The trade executes at **\$101** — the *resting* order's price, not the incoming order's \$102. This is standard price-time priority: the order that was already in the book gets its price honored. The trade is logged to the `trades` table as `(buy_order_id=12, sell_order_id=7, price=101, quantity=10)`.
 3. 10 units fill immediately, fully consuming order #7. That price level is removed from the ask side since it's now empty.
-4. The incoming order still has 5 units unfilled. Since every order placed through the API is a limit order (see the note above), the remainder rests in the book as a new bid:
+4. The incoming order still has 5 units unfilled. Since this was a **limit** order, the remainder rests in the book as a new bid:
 
 ```
 ----- BIDS -----
@@ -136,7 +134,7 @@ Price: 102
 
 If two orders sit at the same price level, the one that arrived first is matched first (time priority) — a second incoming sell at $101 would be matched against order #7 before any later order at the same price, regardless of size.
 
-*(The matching engine's core loop does support market orders — matching until filled or the book is exhausted, with any unfilled remainder discarded rather than resting — but this path isn't currently reachable through the HTTP API, which always constructs `OrderType::LIMIT` orders.)*
+If the same order were placed with `type=MARKET` instead, the 10-unit fill at $101 would happen identically, but the leftover 5 units would simply be discarded rather than resting in the book — market orders only take whatever liquidity is immediately available and never wait in the book.
 
 ## Performance
 
@@ -175,5 +173,4 @@ Deployed as a Docker web service on Render's free tier. Two notes on the current
 - SQLite + ephemeral storage means trade history isn't durable across restarts in the current deployment
 - Order book uses `std::map`-per-side rather than a flatter, tick-size-bucketed structure, which is the main remaining latency cost at scale
 - No authentication/rate-limiting on the HTTP API — fine for a demo, not production-ready as-is
-- Market orders are implemented in the matching engine but not yet exposed through `/order` — the HTTP handler currently only constructs limit orders; adding a `type` parameter to the request would close this gap
 - No input validation on the `/order` and `/cancel` form parameters (e.g. malformed or missing fields will throw on `std::stoi` rather than returning a clean error response)
