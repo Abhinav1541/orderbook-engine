@@ -261,19 +261,21 @@ int main() {
     res.set_content(result, "text/plain");
 });
 
-    svr.Post("/order", [](const httplib::Request& req, httplib::Response& res) {
-        int orderId = std::stoi(req.get_param_value("orderId"));
-        int price = std::stoi(req.get_param_value("price"));
-        int quantity = std::stoi(req.get_param_value("quantity"));
-        std::string sideStr = req.get_param_value("side");
+  svr.Post("/order", [](const httplib::Request& req, httplib::Response& res) {
+    int orderId = std::stoi(req.get_param_value("orderId"));
+    int price = std::stoi(req.get_param_value("price"));
+    int quantity = std::stoi(req.get_param_value("quantity"));
+    std::string sideStr = req.get_param_value("side");
+    std::string typeStr = req.get_param_value("type");
 
-        Side side = (sideStr == "BUY") ? Side::BUY : Side::SELL;
+    Side side = (sideStr == "BUY") ? Side::BUY : Side::SELL;
+    OrderType type = (typeStr == "MARKET") ? OrderType::MARKET : OrderType::LIMIT;
 
-        Order o = {orderId, price, quantity, side, 0, OrderType::LIMIT};
-        addOrder(o);
+    Order o = {orderId, price, quantity, side, 0, type};
+    addOrder(o);
 
-        res.set_content("Order added successfully.", "text/plain");
-    });
+    res.set_content("Order added successfully.", "text/plain");
+});
 
     svr.Post("/cancel", [](const httplib::Request& req, httplib::Response& res) {
         int orderId = std::stoi(req.get_param_value("orderId"));
