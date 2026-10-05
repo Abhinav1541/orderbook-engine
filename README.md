@@ -139,7 +139,35 @@ If the same order were placed with `type=MARKET` instead, the 10-unit fill at $1
 
 ## Performance
 
-Benchmarked locally at roughly **1.4 million orders/second**, with sub-microsecond p50 matching latency. Profiling showed that price-level cardinality (the cost of inserting/erasing keys in the `std::map` as price levels come and go) — not the matching logic itself — is the dominant cost at high order volume. Further optimization (e.g. tick-size bucketing into a flatter structure) is a possible future improvement, not yet implemented.
+### Investigation (original `std::map` implementation)
+
+Initial benchmarking measured ~1.4 million orders/sec with sub-microsecond p50 latency, using a harness that isolated specific hypotheses rather than just measuring overall throughput:
+
+| Benchmark | p50 | p99 |
+|---|---|---|
+| Baseline (mixed random orders) | 500–700 ns | 1300–2500 ns |
+| Insert-only (100k unique prices) | 1400–1600 ns | 1900–2600 ns |
+| Match-only (fixed price, alternating sides) | 500 ns | 900 ns |
+| Insert-only, small price range (10 levels) | 600 ns | 900 ns |
+
+The initial hypothesis — that matching would be the expensive part, since it does more work per order — was wrong. Insert-only was consistently *slower* than match-only, which pointed to a different cause: **`std::map`'s cost scales with the number of distinct price levels it has to manage** (it's a balanced tree internally, so more unique keys means more rebalancing), not with matching logic itself. Confirmed by re-running insert-only with only 10 possible prices instead of 100,000 unique ones — p50 dropped ~3x (1600ns → 600ns), landing right in line with match-only. **Price-level cardinality, not order volume or matching complexity, was the actual bottleneck.**
+
+### Optimization: tick-indexed flat array
+
+Replaced `std::map<int, std::list<Order>>` with a flat `std::vector<std::list<Order>>`, indexed directly by `price - MIN_PRICE`, with the current best bid/ask tracked as plain integers updated incrementally. This trades an unbounded price range for O(1) level access and far better cache locality — a real tradeoff, not a free win (see "Known limitations").
+
+Re-running the same benchmark suite against the new structure:
+
+| Benchmark | p50 (before) | p50 (after) | Improvement |
+|---|---|---|---|
+| Baseline (mixed) | 500–700 ns | **200 ns** | ~3x |
+| Insert-only (full supported range*) | 1400–1600 ns | **200 ns** | **~7–8x** |
+| Match-only | 500 ns | **200 ns** | ~2.5x |
+| Insert-only, small range (10 levels) | 600 ns | **100–200 ns** | ~3–4x |
+
+\* *capped at 10,000 unique prices instead of the original 100,000 — a direct consequence of the array now assuming a bounded price range, rather than an exact re-run of the old test.*
+
+Baseline throughput went from ~1.4M to **~2.2M orders/sec**. More importantly, **insert-only and match-only are now statistically indistinguishable (200ns vs 200ns)** — direct confirmation that price-level cardinality, the bottleneck identified above, no longer matters: array indexing costs the same O(1) regardless of how many levels are populated. One honest caveat: baseline p99 is still ~2300ns, notably higher than the other tests' p99s — likely `std::list` node allocation and general OS scheduling noise, not something this specific change addresses.
 
 ## Running locally
 
@@ -172,6 +200,6 @@ Deployed as a Docker web service on Render's free tier. Two notes on the current
 ## Known limitations / possible future work
 
 - SQLite + ephemeral storage means trade history isn't durable across restarts in the current deployment
-- Order book uses `std::map`-per-side rather than a flatter, tick-size-bucketed structure, which is the main remaining latency cost at scale
+- The order book's flat-array structure assumes a bounded price range (currently 1–10,000); an order outside that range is silently rejected rather than dynamically resizing the book, which a real multi-instrument system would need to handle per-instrument
 - No authentication/rate-limiting on the HTTP API — fine for a demo, not production-ready as-is
 - No input validation on the `/order` and `/cancel` form parameters (e.g. malformed or missing fields will throw on `std::stoi` rather than returning a clean error response)
