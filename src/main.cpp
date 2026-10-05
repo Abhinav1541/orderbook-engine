@@ -306,12 +306,30 @@ struct Order {
     OrderType type;
 };
 
-std::map<int, std::list<Order>, std::greater<int>> bids;
-std::map<int, std::list<Order>> asks;
+// Tick-indexed flat order book, replacing the original std::map<price, list<Order>>.
+// Price levels map directly to array indices (index = price - MIN_PRICE), giving
+// O(1) access to any level and much better cache locality than a red-black tree,
+// at the cost of assuming a bounded, known price range up front (1 to 10,000 here;
+// a real instrument would size this from its actual tick size and price bounds).
+const int MIN_PRICE = 1;
+const int MAX_PRICE = 10000;
+const int PRICE_RANGE = MAX_PRICE - MIN_PRICE + 1;
+
+std::vector<std::list<Order>> bidLevels(PRICE_RANGE);
+std::vector<std::list<Order>> askLevels(PRICE_RANGE);
+
+// Best bid = highest occupied index; best ask = lowest occupied index.
+// Tracked incrementally (O(1) on insert, amortized scan on removal) so matching
+// never has to search the whole array to find the current best price.
+int bestBidIndex = -1;          // -1 means no resting bids
+int bestAskIndex = PRICE_RANGE; // PRICE_RANGE means no resting asks
+
+inline int priceToIndex(int price) { return price - MIN_PRICE; }
+inline int indexToPrice(int index) { return index + MIN_PRICE; }
 
 struct OrderLocation {
     Side side;
-    int price;
+    int index;
     std::list<Order>::iterator it;
 };
 
@@ -367,15 +385,14 @@ void logTrade(int buyOrderId, int sellOrderId, int price, int quantity) {
 }
 
 void matchBuyOrder(Order& buyOrder) {
-    while (buyOrder.quantity > 0 && !asks.empty()) {
-        auto bestAskLevel = asks.begin();
-        int bestAskPrice = bestAskLevel->first;
+    while (buyOrder.quantity > 0 && bestAskIndex < PRICE_RANGE) {
+        int bestAskPrice = indexToPrice(bestAskIndex);
 
         if (buyOrder.price < bestAskPrice) {
             break;
         }
 
-        std::list<Order>& ordersAtBestAsk = bestAskLevel->second;
+        std::list<Order>& ordersAtBestAsk = askLevels[bestAskIndex];
         Order& restingOrder = ordersAtBestAsk.front();
 
         int tradedQty = std::min(buyOrder.quantity, restingOrder.quantity);
@@ -391,21 +408,27 @@ void matchBuyOrder(Order& buyOrder) {
         }
 
         if (ordersAtBestAsk.empty()) {
-            asks.erase(bestAskLevel);
+            // Level just emptied — advance to the next occupied level above.
+            // Worst case this scans the gap to the next resting order, but in
+            // practice gaps are small, and this replaces what used to be an
+            // O(log n) tree erase with amortized O(1) array access instead.
+            bestAskIndex++;
+            while (bestAskIndex < PRICE_RANGE && askLevels[bestAskIndex].empty()) {
+                bestAskIndex++;
+            }
         }
     }
 }
 
 void matchSellOrder(Order& sellOrder) {
-    while (sellOrder.quantity > 0 && !bids.empty()) {
-        auto bestBidLevel = bids.begin();
-        int bestBidPrice = bestBidLevel->first;
+    while (sellOrder.quantity > 0 && bestBidIndex >= 0) {
+        int bestBidPrice = indexToPrice(bestBidIndex);
 
         if (sellOrder.price > bestBidPrice) {
             break;
         }
 
-        std::list<Order>& ordersAtBestBid = bestBidLevel->second;
+        std::list<Order>& ordersAtBestBid = bidLevels[bestBidIndex];
         Order& restingOrder = ordersAtBestBid.front();
 
         int tradedQty = std::min(sellOrder.quantity, restingOrder.quantity);
@@ -421,25 +444,38 @@ void matchSellOrder(Order& sellOrder) {
         }
 
         if (ordersAtBestBid.empty()) {
-            bids.erase(bestBidLevel);
+            bestBidIndex--;
+            while (bestBidIndex >= 0 && bidLevels[bestBidIndex].empty()) {
+                bestBidIndex--;
+            }
         }
     }
 }
 
 void addOrder(Order order) {
+    if (order.price < MIN_PRICE || order.price > MAX_PRICE) {
+        cout << "Order rejected: price " << order.price << " outside supported range ["
+             << MIN_PRICE << ", " << MAX_PRICE << "]" << endl;
+        return;
+    }
+
+    int idx = priceToIndex(order.price);
+
     if (order.side == Side::BUY) {
         matchBuyOrder(order);
         if (order.quantity > 0 && order.type == OrderType::LIMIT) {
-            bids[order.price].push_back(order);
-            auto it = std::prev(bids[order.price].end());
-            orderLookup[order.orderId] = {Side::BUY, order.price, it};
+            bidLevels[idx].push_back(order);
+            auto it = std::prev(bidLevels[idx].end());
+            orderLookup[order.orderId] = {Side::BUY, idx, it};
+            if (idx > bestBidIndex) bestBidIndex = idx;
         }
     } else {
         matchSellOrder(order);
         if (order.quantity > 0 && order.type == OrderType::LIMIT) {
-            asks[order.price].push_back(order);
-            auto it = std::prev(asks[order.price].end());
-            orderLookup[order.orderId] = {Side::SELL, order.price, it};
+            askLevels[idx].push_back(order);
+            auto it = std::prev(askLevels[idx].end());
+            orderLookup[order.orderId] = {Side::SELL, idx, it};
+            if (idx < bestAskIndex) bestAskIndex = idx;
         }
     }
 }
@@ -455,14 +491,20 @@ void cancelOrder(int orderId) {
     OrderLocation loc = lookupIt->second;
 
     if (loc.side == Side::BUY) {
-        bids[loc.price].erase(loc.it);
-        if (bids[loc.price].empty()) {
-            bids.erase(loc.price);
+        bidLevels[loc.index].erase(loc.it);
+        if (bidLevels[loc.index].empty() && loc.index == bestBidIndex) {
+            bestBidIndex--;
+            while (bestBidIndex >= 0 && bidLevels[bestBidIndex].empty()) {
+                bestBidIndex--;
+            }
         }
     } else {
-        asks[loc.price].erase(loc.it);
-        if (asks[loc.price].empty()) {
-            asks.erase(loc.price);
+        askLevels[loc.index].erase(loc.it);
+        if (askLevels[loc.index].empty() && loc.index == bestAskIndex) {
+            bestAskIndex++;
+            while (bestAskIndex < PRICE_RANGE && askLevels[bestAskIndex].empty()) {
+                bestAskIndex++;
+            }
         }
     }
 
@@ -470,22 +512,36 @@ void cancelOrder(int orderId) {
     cout << "Order " << orderId << " cancelled." << endl;
 }
 
-void printBook() {
-    cout << "----- BIDS -----" << endl;
-    for (const auto& [price, orderList] : bids) {
-        cout << "Price: " << price << endl;
-        for (const auto& order : orderList) {
-            cout << "  OrderId: " << order.orderId << ", Qty: " << order.quantity << endl;
+// Shared by the /orderbook route and local debugging via printBook().
+// Only touches indices between the current best price and the edge of the
+// book on each side, not the full PRICE_RANGE, so a sparse book stays cheap
+// to print even though the underlying array covers the whole price range.
+std::string formatBook() {
+    std::string result = "";
+
+    result += "----- BIDS -----\n";
+    for (int i = bestBidIndex; i >= 0; i--) {
+        if (bidLevels[i].empty()) continue;
+        result += "Price: " + std::to_string(indexToPrice(i)) + "\n";
+        for (const auto& order : bidLevels[i]) {
+            result += "  OrderId: " + std::to_string(order.orderId) + ", Qty: " + std::to_string(order.quantity) + "\n";
         }
     }
 
-    cout << "----- ASKS -----" << endl;
-    for (const auto& [price, orderList] : asks) {
-        cout << "Price: " << price << endl;
-        for (const auto& order : orderList) {
-            cout << "  OrderId: " << order.orderId << ", Qty: " << order.quantity << endl;
+    result += "----- ASKS -----\n";
+    for (int i = bestAskIndex; i < PRICE_RANGE; i++) {
+        if (askLevels[i].empty()) continue;
+        result += "Price: " + std::to_string(indexToPrice(i)) + "\n";
+        for (const auto& order : askLevels[i]) {
+            result += "  OrderId: " + std::to_string(order.orderId) + ", Qty: " + std::to_string(order.quantity) + "\n";
         }
     }
+
+    return result;
+}
+
+void printBook() {
+    cout << formatBook();
 }
 
 int main() {
@@ -498,23 +554,7 @@ int main() {
     });
 
     svr.Get("/orderbook", [](const httplib::Request&, httplib::Response& res) {
-        std::string result = "";
-
-        result += "----- BIDS -----\n";
-        for (const auto& [price, orderList] : bids) {
-            result += "Price: " + std::to_string(price) + "\n";
-            for (const auto& order : orderList) {
-                result += "  OrderId: " + std::to_string(order.orderId) + ", Qty: " + std::to_string(order.quantity) + "\n";
-            }
-        }
-
-        result += "----- ASKS -----\n";
-        for (const auto& [price, orderList] : asks) {
-            result += "Price: " + std::to_string(price) + "\n";
-            for (const auto& order : orderList) {
-                result += "  OrderId: " + std::to_string(order.orderId) + ", Qty: " + std::to_string(order.quantity) + "\n";
-            }
-        }
+        std::string result = formatBook();
 
         res.set_content(result, "text/plain");
     });
